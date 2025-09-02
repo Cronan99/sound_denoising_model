@@ -291,3 +291,8 @@ save_example_sounds(
 # Save the model
 model.save('denoising_model.h5')
 # %%
+m = tf.keras.models.load_model("best_denoising_model.h5", compile=False)
+
+# 1) SavedModel directory (most portable)
+tf.saved_model.save(m, "best_denoising_savedmodel")
+# %%

@@ -6,6 +6,8 @@ import soundfile as sf
 import matplotlib.pyplot as plt
 import os
 import requests
+import zipfile
+import io
 
 # ==========================
 # Parameters (match training)
@@ -21,22 +23,25 @@ N_ITER = 128  # Griffin-Lim iterations
 # ==========================
 # Load Model
 # ==========================
-MODEL_PATH = "best_denoising_model.h5"
-MODEL_URL = "https://github.com/Cronan99/sound_denoising_model/releases/download/model/best_denoising_model.h5"
+MODEL_DIR = "best_denoising_savedmodel"
+MODEL_ZIP_URL = "https://github.com/Cronan99/sound_denoising_model/releases/download/model/best_denoising_savedmodel.zip"
 
-def download_model():
-    if not os.path.exists(MODEL_PATH):
-        with st.spinner("Downloading model..."):
-            r = requests.get(MODEL_URL, stream=True)
-            r.raise_for_status()
-            with open(MODEL_PATH, "wb") as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
+def download_and_unzip(url: str, dest_dir: str):
+    os.makedirs(dest_dir, exist_ok=True)
+    with st.spinner("Downloading model..."):
+        r = requests.get(url, stream=True)
+        r.raise_for_status()
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+        z.extractall(dest_dir)
 
 @st.cache_resource
 def load_model():
-    download_model()
-    return tf.keras.models.load_model(MODEL_PATH, compile=False)
+    # Download and extract if model folder doesn't exist
+    if not os.path.isdir(MODEL_DIR):
+        download_and_unzip(MODEL_ZIP_URL, ".")
+    # Load and return the model
+    model = tf.keras.models.load_model(MODEL_DIR, compile=False)
+    return model
 
 model = load_model()
 

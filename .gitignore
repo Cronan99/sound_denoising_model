@@ -9,3 +9,5 @@ tcn_20_epoch
 test_run_of_tcn_autoencoder
 best_denoising_model.h5
 denoising_model.h5
+best_denoising_savedmodel
+best_denoising_savedmodel.zip
