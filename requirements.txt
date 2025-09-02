@@ -1,17 +1,17 @@
-# Streamlit
-streamlit==1.35.0
+# Streamlit (newer releases don’t pin protobuf <5)
+streamlit==1.49.1
 
-# TensorFlow for Python 3.13 (CPU-only package by default in 2.11+)
+# TensorFlow for Python 3.13 (CPU-only by default since 2.11+)
 tensorflow==2.20.0
 
-# Audio / DSP stack
-librosa==0.10.2.post1     # numpy 2.x compatible
+# Audio / plotting
+librosa==0.10.2.post1
 soundfile>=0.12.1
 pydub>=0.25.1
 tqdm>=4.66.0
 matplotlib>=3.8
 
-# Let the resolver pick compatible builds for Py3.13 + TF 2.20
+# Let pip resolve Py3.13-compatible wheels (don’t pin old versions)
 numpy
 scipy
 
