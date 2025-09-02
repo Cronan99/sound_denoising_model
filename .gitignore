@@ -1,0 +1,11 @@
+clips
+data
+example_sounds
+first_model_results
+funny_example_sounds
+model_2.0_no_tcn
+spectrograms
+tcn_20_epoch
+test_run_of_tcn_autoencoder
+best_denoising_model.h5
+denoising_model.h5
