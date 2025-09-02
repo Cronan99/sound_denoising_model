@@ -5,6 +5,7 @@ import librosa
 import soundfile as sf
 import matplotlib.pyplot as plt
 import os
+import requests
 
 # ==========================
 # Parameters (match training)
@@ -20,10 +21,22 @@ N_ITER = 128  # Griffin-Lim iterations
 # ==========================
 # Load Model
 # ==========================
+MODEL_PATH = "best_denoising_model.h5"
+MODEL_URL = "https://github.com/Cronan99/sound_denoising_model/releases/download/model/best_denoising_model.h5"
+
+def download_model():
+    if not os.path.exists(MODEL_PATH):
+        with st.spinner("Downloading model..."):
+            r = requests.get(MODEL_URL, stream=True)
+            r.raise_for_status()
+            with open(MODEL_PATH, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
 @st.cache_resource
 def load_model():
-    model = tf.keras.models.load_model("best_denoising_model.h5", compile=False)
-    return model
+    download_model()
+    return tf.keras.models.load_model(MODEL_PATH, compile=False)
 
 model = load_model()
 

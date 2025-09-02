@@ -18,3 +18,5 @@ scipy
 # Build helpers
 setuptools
 wheel
+
+requests
