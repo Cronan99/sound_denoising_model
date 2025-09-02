@@ -1,52 +1,60 @@
+import os
+import io
+import zipfile
+import requests
 import streamlit as st
-import tensorflow as tf
 import numpy as np
+import tensorflow as tf
+import keras
+from keras.layers import TFSMLayer, Input
+from keras.models import Model
 import librosa
 import soundfile as sf
 import matplotlib.pyplot as plt
-import os
-import requests
-import zipfile
-import io
 
 # ==========================
 # Parameters (match training)
 # ==========================
 FRAME_LENGTH = 1024
-FRAME_STEP = 512
-FFT_LENGTH = 1024
-SR = 32000
-MAX_LEN = 512  # will be updated after loading model
-FREQ_BINS = 513
-N_ITER = 128  # Griffin-Lim iterations
+FRAME_STEP   = 512
+FFT_LENGTH   = 1024
+SR           = 32000
+MAX_LEN      = 512          # keep explicit (don’t infer from model)
+FREQ_BINS    = 513
+N_ITER       = 128
 
 # ==========================
-# Load Model
+# Model download / load (SavedModel via TFSMLayer)
 # ==========================
-MODEL_DIR = "best_denoising_savedmodel"
+MODEL_DIR     = "best_denoising_savedmodel"
 MODEL_ZIP_URL = "https://github.com/Cronan99/sound_denoising_model/releases/download/model/best_denoising_savedmodel.zip"
 
-def download_and_unzip(url: str, dest_dir: str):
-    os.makedirs(dest_dir, exist_ok=True)
+def download_and_unzip(url: str, extract_into: str = "."):
+    os.makedirs(extract_into, exist_ok=True)
     with st.spinner("Downloading model..."):
         r = requests.get(url, stream=True)
         r.raise_for_status()
         z = zipfile.ZipFile(io.BytesIO(r.content))
-        z.extractall(dest_dir)
+        z.extractall(extract_into)
 
 @st.cache_resource
 def load_model():
-    # Download and extract if model folder doesn't exist
+    # Ensure SavedModel folder exists locally
     if not os.path.isdir(MODEL_DIR):
         download_and_unzip(MODEL_ZIP_URL, ".")
-    # Load and return the model
-    model = tf.keras.models.load_model(MODEL_DIR, compile=False)
-    return model
+
+    # Wrap SavedModel for Keras 3
+    tfsmlayer = TFSMLayer(MODEL_DIR, call_endpoint="serving_default")
+
+    # Build a small Keras wrapper so we can call model.predict(...)
+    x_in  = Input(shape=(MAX_LEN, FREQ_BINS), dtype=tf.float32, name="spec_input")
+    y_out = tfsmlayer(x_in)  # may return a tensor or a dict
+    if isinstance(y_out, dict):   # if SavedModel returns a dict, take first value
+        y_out = list(y_out.values())[0]
+    wrapped = Model(inputs=x_in, outputs=y_out, name="denoiser_wrapper")
+    return wrapped
 
 model = load_model()
-
-# infer max_len from model input
-MAX_LEN = model.input_shape[1]
 
 # ==========================
 # Utility functions
@@ -55,8 +63,7 @@ def wav_to_spec_db(y, sr=SR):
     stft = librosa.stft(y, n_fft=FFT_LENGTH, hop_length=FRAME_STEP, win_length=FRAME_LENGTH)
     magnitude = np.abs(stft)
     db = 20 * np.log10(magnitude + 1e-6)
-    spec = db.T  # shape (time, freq)
-    return spec
+    return db.T  # (time, freq)
 
 def pad_or_truncate(spec, max_len=MAX_LEN):
     if spec.shape[0] < max_len:
@@ -67,7 +74,7 @@ def pad_or_truncate(spec, max_len=MAX_LEN):
     return spec
 
 def spec_to_wav_db(db_spec, sr=SR):
-    # (Keep the original version that worked for you)
+    # Original path that worked for you
     linear_spec = 10 ** (db_spec / 20.0)
     linear_spec = linear_spec.T
     audio = librosa.griffinlim(
@@ -105,27 +112,27 @@ if uploaded_file is not None:
     st.subheader("Uploaded clean audio")
     st.audio(uploaded_file, format="audio/wav")
 
-    # --- Create synthetic noisy version (unchanged path) ---
+    # Create synthetic noisy version (unchanged path)
     y_noisy = add_noise(y_clean)
 
     # Convert to spectrograms
     spec_clean = wav_to_spec_db(y_clean, sr=SR)          # for visualization
     spec_noisy = wav_to_spec_db(y_noisy, sr=SR)
-    spec_proc = pad_or_truncate(spec_noisy, MAX_LEN)     # model input (unchanged)
+    spec_proc  = pad_or_truncate(spec_noisy, MAX_LEN)    # model input (unchanged)
 
     # Predict
     input_tensor = np.expand_dims(spec_proc, axis=0).astype(np.float32)  # (1, time, freq)
-    pred_spec = model.predict(input_tensor)[0]
+    pred_spec    = model.predict(input_tensor)[0]
 
     # Convert back to audio (UNCHANGED: reconstruct both noisy & predicted)
     audio_noisy = spec_to_wav_db(spec_proc, sr=SR)
-    audio_pred = spec_to_wav_db(pred_spec, sr=SR)
+    audio_pred  = spec_to_wav_db(pred_spec, sr=SR)
 
     # Save temp files
     noisy_path = "noisy_out.wav"
-    pred_path = "denoised_out.wav"
+    pred_path  = "denoised_out.wav"
     sf.write(noisy_path, audio_noisy, SR)
-    sf.write(pred_path, audio_pred, SR)
+    sf.write(pred_path,  audio_pred,  SR)
 
     # Play back
     st.subheader("Results")
