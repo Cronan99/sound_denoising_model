@@ -13,13 +13,12 @@ import soundfile as sf
 import matplotlib.pyplot as plt
 
 # ==========================
-# Parameters (match training)
+# Parameters (match training except time-steps, which we'll detect)
 # ==========================
 FRAME_LENGTH = 1024
 FRAME_STEP   = 512
 FFT_LENGTH   = 1024
 SR           = 32000
-MAX_LEN      = 512          # keep explicit (don’t infer from model)
 FREQ_BINS    = 513
 N_ITER       = 128
 
@@ -37,24 +36,44 @@ def download_and_unzip(url: str, extract_into: str = "."):
         z = zipfile.ZipFile(io.BytesIO(r.content))
         z.extractall(extract_into)
 
+def _detect_required_timesteps(savedmodel_dir: str, endpoint: str = "serving_default") -> int:
+    """Loads the SavedModel signature and returns required time length (shape[1])."""
+    sm = tf.saved_model.load(savedmodel_dir)
+    sig = sm.signatures.get(endpoint)
+    if sig is None:
+        raise ValueError(f"No signature '{endpoint}' found in SavedModel.")
+    # structured_input_signature = (args_spec, kwargs_spec); we need kwargs dict
+    kwargs = sig.structured_input_signature[1]
+    # Take the first (and usually only) input spec
+    inp_spec = next(iter(kwargs.values()))
+    # shape is usually (None, time, freq)
+    time_steps = int(inp_spec.shape[1])
+    freq_bins  = int(inp_spec.shape[2])
+    if freq_bins != FREQ_BINS:
+        raise ValueError(f"SavedModel expects {freq_bins} freq bins, but app is set to {FREQ_BINS}.")
+    return time_steps
+
 @st.cache_resource
-def load_model():
+def load_model_and_shape():
     # Ensure SavedModel folder exists locally
     if not os.path.isdir(MODEL_DIR):
         download_and_unzip(MODEL_ZIP_URL, ".")
 
+    # Detect required time length from signature (e.g., 390)
+    required_len = _detect_required_timesteps(MODEL_DIR, endpoint="serving_default")
+
     # Wrap SavedModel for Keras 3
     tfsmlayer = TFSMLayer(MODEL_DIR, call_endpoint="serving_default")
 
-    # Build a small Keras wrapper so we can call model.predict(...)
-    x_in  = Input(shape=(MAX_LEN, FREQ_BINS), dtype=tf.float32, name="spec_input")
+    # Build a Keras wrapper so we can call model.predict(...)
+    x_in  = Input(shape=(required_len, FREQ_BINS), dtype=tf.float32, name="spec_input")
     y_out = tfsmlayer(x_in)  # may return a tensor or a dict
     if isinstance(y_out, dict):   # if SavedModel returns a dict, take first value
         y_out = list(y_out.values())[0]
     wrapped = Model(inputs=x_in, outputs=y_out, name="denoiser_wrapper")
-    return wrapped
+    return wrapped, required_len
 
-model = load_model()
+model, MAX_LEN = load_model_and_shape()   # <- MAX_LEN comes from the SavedModel (e.g., 390)
 
 # ==========================
 # Utility functions
@@ -65,7 +84,9 @@ def wav_to_spec_db(y, sr=SR):
     db = 20 * np.log10(magnitude + 1e-6)
     return db.T  # (time, freq)
 
-def pad_or_truncate(spec, max_len=MAX_LEN):
+def pad_or_truncate(spec, max_len=None):
+    if max_len is None:
+        max_len = MAX_LEN
     if spec.shape[0] < max_len:
         pad_width = max_len - spec.shape[0]
         spec = np.pad(spec, ((0, pad_width), (0, 0)), mode='constant')
@@ -74,7 +95,6 @@ def pad_or_truncate(spec, max_len=MAX_LEN):
     return spec
 
 def spec_to_wav_db(db_spec, sr=SR):
-    # Original path that worked for you
     linear_spec = 10 ** (db_spec / 20.0)
     linear_spec = linear_spec.T
     audio = librosa.griffinlim(
@@ -118,7 +138,7 @@ if uploaded_file is not None:
     # Convert to spectrograms
     spec_clean = wav_to_spec_db(y_clean, sr=SR)          # for visualization
     spec_noisy = wav_to_spec_db(y_noisy, sr=SR)
-    spec_proc  = pad_or_truncate(spec_noisy, MAX_LEN)    # model input (unchanged)
+    spec_proc  = pad_or_truncate(spec_noisy, MAX_LEN)    # <- uses detected required length
 
     # Predict
     input_tensor = np.expand_dims(spec_proc, axis=0).astype(np.float32)  # (1, time, freq)
@@ -136,7 +156,7 @@ if uploaded_file is not None:
 
     # Play back
     st.subheader("Results")
-    st.write("Noisy input (reconstructed from padded spectrogram):")
+    st.write(f"Noisy input (reconstructed from padded spectrogram; length={MAX_LEN} frames):")
     st.audio(noisy_path, format="audio/wav")
     st.write("Denoised output (model prediction):")
     st.audio(pred_path, format="audio/wav")
